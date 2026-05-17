@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}注册 - MB Farm{% endblock %}
+{% block extra_css %}
+<style>
+  .navbar { display: none; }
+  .page-content { padding: 0; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="auth-page">
+  <div class="auth-card">
+    <h1>🌱 MB Farm</h1>
+    <p class="subtitle">创建你的农场账号</p>
+    <div id="register-error" class="auth-error"></div>
+    <form id="register-form">
+      <div class="form-group">
+        <label for="username">用户名</label>
+        <input type="text" id="username" name="username" placeholder="2-32个字符" required minlength="2" maxlength="32">
+      </div>
+      <div class="form-group">
+        <label for="password">密码</label>
+        <input type="password" id="password" name="password" placeholder="至少6个字符" required minlength="6" maxlength="128">
+      </div>
+      <div class="form-group">
+        <label for="confirm">确认密码</label>
+        <input type="password" id="confirm" name="confirm" placeholder="再次输入密码" required minlength="6" maxlength="128">
+      </div>
+      <button type="submit" class="btn btn-primary">注册</button>
+    </form>
+    <div class="auth-footer">
+      已有账号？<a href="/login">去登录</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

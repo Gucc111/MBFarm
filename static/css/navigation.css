@@ -1,0 +1,89 @@
+/* MB Farm — Navigation Styles */
+
+.navbar {
+  height: var(--navbar-height);
+  background: var(--color-primary-dark);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+.navbar-brand {
+  font-size: 20px;
+  font-weight: 800;
+  margin-right: 32px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.navbar-brand:hover { color: #fff; }
+.navbar-nav {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+.nav-link {
+  color: rgba(255,255,255,0.75);
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  font-size: 14px;
+  transition: all 0.15s;
+  text-decoration: none;
+}
+.nav-link:hover {
+  color: #fff;
+  background: rgba(255,255,255,0.1);
+}
+.nav-link.active {
+  color: #fff;
+  background: rgba(255,255,255,0.15);
+}
+.navbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.nav-user {
+  font-size: 13px;
+  color: rgba(255,255,255,0.8);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nav-logout {
+  color: rgba(255,255,255,0.6);
+  background: none;
+  border: 1px solid rgba(255,255,255,0.2);
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.nav-logout:hover {
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+}
+
+/* ── Page Layout ──────────────────────────────────────────── */
+
+.page-content {
+  padding: 20px;
+  min-height: calc(100vh - var(--navbar-height));
+}
+
+/* ── Responsive Navbar ────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .navbar { padding: 0 12px; }
+  .navbar-brand { margin-right: 16px; font-size: 17px; }
+  .nav-link { padding: 6px 10px; font-size: 13px; }
+  .nav-user span:not(.stat-icon) { display: none; }
+}

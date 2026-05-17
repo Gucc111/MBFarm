@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}好友农场 - MB Farm{% endblock %}
+{% block content %}
+<div class="social-page">
+  <div class="social-layout">
+    <!-- Sidebar: Friends & Requests -->
+    <div class="social-sidebar">
+      <h3>👥 我的好友</h3>
+      <form class="add-friend-form" onsubmit="event.preventDefault(); doAddFriend();">
+        <input type="text" id="add-friend-input" placeholder="输入好友用户名" required>
+        <button type="submit" class="btn btn-primary btn-sm">添加</button>
+      </form>
+      <ul class="friend-list" id="friend-list"></ul>
+
+      <!-- Pending Requests -->
+      <div id="pending-container"></div>
+
+      <!-- Unlock Info -->
+      <div style="margin-top:16px;">
+        <p style="font-size:13px;color:var(--color-text-light);" id="friend-count">0 好友</p>
+      </div>
+
+      <!-- Steal History -->
+      <div class="steal-section">
+        <h3>📋 偷菜记录</h3>
+        <div id="steal-history-container"></div>
+      </div>
+    </div>
+
+    <!-- Main: Friend's Farm -->
+    <div class="social-main">
+      <h2>🌾 好友农场</h2>
+      <p style="font-size:14px;color:var(--color-text-light);margin-bottom:16px;">
+        点击左侧好友前往偷菜！选择成熟作物进行偷取。
+      </p>
+      <div id="steal-farm-container">
+        <p style="padding:60px 20px;text-align:center;color:var(--color-text-light);font-size:15px;">
+          👈 从左侧选择一位好友，即可查看并偷取他们的成熟作物
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

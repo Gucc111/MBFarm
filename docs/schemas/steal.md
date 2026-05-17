@@ -1,6 +1,6 @@
 # 偷菜模块 Pydantic Schema
 
-> 定义偷菜系统的 Pydantic 数据验证模型。  
+> 定义偷菜系统的 Pydantic v2 数据验证模型。  
 > 对应代码文件：`app/schemas/steal.py`
 
 ---
@@ -37,6 +37,10 @@
 ## 4. 完整 Python 实现
 
 ```python
+"""Steal module Pydantic schemas."""
+
+from __future__ import annotations
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -54,13 +58,13 @@ class StealResult(BaseModel):
 
 
 class StealRecord(BaseModel):
-    """偷菜记录"""
+    """偷菜记录（历史）"""
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     stealer_id: int | None = None
     victim_id: int | None = None
-    seed_type: str
+    stolen_crop_type: str
     quantity: int = 1
     stolen_at: str  # ISO format datetime
 
@@ -76,20 +80,32 @@ class StealHistoryResponse(BaseModel):
 ## 5. 与 routes/steal.md 集成
 
 ```python
-from app.schemas.steal import StealRequest, StealResult, StealHistoryResponse
+from app.schemas.steal import StealResult, StealHistoryResponse
 
-@router.post("/", response_model=StealResult)
+@router.post("/{target_user_id}", response_model=StealResult)
 async def steal_crop(
-    payload: StealRequest,
+    target_user_id: int,
     user: User = Depends(get_current_user),
-    svc: StealService = Depends(get_steal_service),
+    svc: StealService = Depends(_get_service),
 ):
     ...
 
 @router.get("/my", response_model=StealHistoryResponse)
-async def my_stolen(
+async def get_my_stolen(
     user: User = Depends(get_current_user),
-    svc: StealService = Depends(get_steal_service),
+    svc: StealService = Depends(_get_service),
 ):
     ...
 ```
+
+---
+
+## 6. 设计决策
+
+### StealRecord 字段命名
+
+`StealRecord.stolen_crop_type` 与 `StealLog.stolen_crop_type` 保持一致，而非使用 `seed_type`。这样在 `from_attributes=True` 模式下可以直接从 ORM 对象转换。
+
+### StealResult 不标记 from_attributes
+
+`StealResult` 不使用 `ConfigDict(from_attributes=True)`，因为它由 service 层构造的 dict 数据填充，不是从 ORM 模型直接转换。

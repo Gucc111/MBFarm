@@ -9,11 +9,11 @@
 
 | 职责 | 说明 |
 |------|------|
-| **发送好友请求** | 校验 → 创建 pending 记录 → 创建通知 |
-| **接受/拒绝请求** | 更新 status → 接受时创建双向关系 → 创建通知 |
-| **好友列表** | 查询所有 accepted 关系 |
-| **拉黑用户** | 设置 status=blocked → 阻止对方操作 |
-| **解除好友** | 删除双向 friendship 记录 |
+| **发送好友请求** | 按用户名查找目标 → 校验 → 调用 `SocialRepo.send_request`（通知系统 TODO） |
+| **接受/拒绝请求** | 调用 `SocialRepo.accept_request` / `reject_request`（repo 层创建双向关系） |
+| **好友列表** | 查询所有 accepted 关系，返回好友信息 + 待处理计数 |
+| **拉黑用户** | 调用 `SocialRepo.block_user`，无需已有关系 |
+| **解除好友** | 调用 `SocialRepo.remove_friendship` 删除双向记录 |
 
 ---
 
@@ -21,7 +21,7 @@
 
 ### 异常处理
 
-统一使用 `core/exceptions.md` 中定义的 `AppError` 子类：
+统一使用 `app/core/exceptions.py` 中定义的 `AppError` 子类，由 `main.py` 的全局异常处理器转换为 JSON 响应：
 
 | 业务场景 | 异常类 | HTTP 状态码 |
 |----------|--------|-------------|
@@ -30,20 +30,19 @@
 | 请求不存在 | `NotFoundError("好友请求不存在")` | 404 |
 | 重复请求 | `ConflictError("已发送过好友请求")` | 409 |
 | 好友已满 | `ConflictError("好友已达上限")` | 409 |
+| 用户不存在 | `NotFoundError("用户不存在: {username}")` | 404 |
 
-### 单表设计
+### 按用户名添加好友
 
-好友关系使用单表 `friendships`（定义在 `models/social.md`），通过 `status` 字段区分：
-- `pending` = 请求待处理
-- `accepted` = 已确认好友
-- `rejected` = 已拒绝
-- `blocked` = 已拉黑
-
-接受好友请求时创建**两条记录**（A→B 和 B→A 均为 accepted），确保查询任一方向都能找到好友。
+`add_friend` 接收 `friend_username`（字符串），通过 `UserRepository.get_by_username` 查找目标用户。这样前端无需维护用户 ID 映射。
 
 ### 好友上限
 
-每人最多 50 位好友（`core/constants.py` 的 `MAX_FRIENDS`），在 service 层校验。
+每人最多 `SYSTEM.max_friends`（50）位好友，在 service 层通过 `SocialRepo.count_friends` 校验。
+
+### 通知（TODO）
+
+通知系统尚未实现。`add_friend` 中有 TODO 注释，待 `NotificationService` 上线后补充。
 
 ---
 
@@ -51,12 +50,12 @@
 
 | 方法 | 参数 | 返回值 | 异常 |
 |------|------|--------|------|
-| `add_friend(user_id, friend_username)` | — | `Friendship` | 422/403/409 |
-| `respond_to_request(user_id, friendship_id, accept)` | — | `dict` | 404/422 |
-| `get_friend_list(user_id)` | — | `list[FriendResponse]` | — |
-| `get_pending_requests(user_id)` | — | `list[dict]` | — |
-| `block_user(user_id, target_id)` | — | `dict` | 404 |
-| `remove_friend(user_id, friend_id)` | — | `dict` | 404 |
+| `add_friend(user_id, friend_username)` | — | `dict` (friendship_id, status) | 422/403/409 |
+| `respond_to_request(user_id, friendship_id, accept)` | — | `dict` (friendship_id, status) | 404/422 |
+| `get_friend_list(user_id)` | — | `dict` (friends, total, pending_count) | — |
+| `get_pending_requests(user_id)` | — | `dict` (requests, total) | — |
+| `block_user(user_id, target_id)` | — | `dict` (target_id, action) | 422 |
+| `remove_friend(user_id, friend_id)` | — | `dict` (friend_id, action) | — |
 
 ---
 
@@ -65,7 +64,11 @@
 ```python
 """Friend service — business logic for friend management."""
 
-from app.core.constants import MAX_FRIENDS
+from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.constants import SYSTEM
 from app.core.exceptions import (
     AppValidationError,
     ConflictError,
@@ -74,17 +77,15 @@ from app.core.exceptions import (
 )
 from app.repositories.social_repo import SocialRepo
 from app.repositories.user_repo import UserRepository
-from app.services.notification import NotificationService
 
 
 class FriendService:
     """好友关系业务逻辑。"""
 
-    def __init__(self, db):
+    def __init__(self, db: AsyncSession):
         self.db = db
         self.social_repo = SocialRepo(db)
         self.user_repo = UserRepository(db)
-        self.notif_service = NotificationService(db)
 
     async def add_friend(self, user_id: int, friend_username: str) -> dict:
         """发送好友请求。"""
@@ -94,12 +95,10 @@ class FriendService:
         if target.id == user_id:
             raise AppValidationError("不能添加自己为好友")
 
-        # 检查是否被拉黑
         block = await self.social_repo.get_friendship(target.id, user_id)
         if block and block.status == "blocked":
             raise ForbiddenError("你已被对方拉黑")
 
-        # 检查是否已有请求或已是好友
         existing = await self.social_repo.get_friendship(user_id, target.id)
         if existing:
             if existing.status == "accepted":
@@ -107,25 +106,12 @@ class FriendService:
             if existing.status == "pending":
                 raise ConflictError("已发送过好友请求，等待对方回应")
 
-        # 检查好友上限
         friend_count = await self.social_repo.count_friends(user_id)
-        if friend_count >= MAX_FRIENDS:
-            raise ConflictError(f"好友已达上限 ({MAX_FRIENDS})")
+        if friend_count >= SYSTEM.max_friends:
+            raise ConflictError(f"好友已达上限 ({SYSTEM.max_friends})")
 
-        friendship = await self.social_repo.create_friendship(
-            user_id=user_id,
-            friend_id=target.id,
-            status="pending",
-        )
-
-        # 创建通知
-        await self.notif_service.create(
-            user_id=target.id,
-            type="friend_request",
-            title="收到好友请求",
-            message=f"{friend_username} 请求添加你为好友",
-            from_user_id=user_id,
-        )
+        friendship = await self.social_repo.send_request(user_id, target.id)
+        # TODO: 通知系统上线后添加
 
         return {"friendship_id": friendship.id, "status": "pending"}
 
@@ -138,53 +124,52 @@ class FriendService:
             raise AppValidationError("请求已处理")
 
         if accept:
-            # 更新原始请求为 accepted
-            await self.social_repo.update_status(friendship_id, "accepted")
-            # 创建反向关系
-            await self.social_repo.create_friendship(
-                user_id=friendship.user_id,
-                friend_id=user_id,
-                status="accepted",
-            )
+            await self.social_repo.accept_request(friendship.user_id, user_id)
             new_status = "accepted"
         else:
-            await self.social_repo.update_status(friendship_id, "rejected")
+            await self.social_repo.reject_request(friendship.user_id, user_id)
             new_status = "rejected"
 
         return {"friendship_id": friendship_id, "status": new_status}
 
-    async def get_friend_list(self, user_id: int) -> list[dict]:
+    async def get_friend_list(self, user_id: int) -> dict:
         """获取好友列表。"""
         friendships = await self.social_repo.get_friends(user_id)
-        return [
-            {
-                "id": f.id,
-                "friend_id": f.friend_id,
-                "status": f.status,
-                "created_at": f.created_at.isoformat(),
-            }
-            for f in friendships
-        ]
+        friends = []
+        for f in friendships:
+            if f.friend:
+                friends.append({
+                    "id": f.friend.id,
+                    "username": f.friend.username,
+                    "level": f.friend.level,
+                    "xp": f.friend.xp,
+                })
+        pending_count = await self.social_repo.count_pending_received(user_id)
+        return {
+            "friends": friends,
+            "total": len(friends),
+            "pending_count": pending_count,
+        }
 
-    async def get_pending_requests(self, user_id: int) -> list[dict]:
+    async def get_pending_requests(self, user_id: int) -> dict:
         """获取待处理的请求。"""
         pending = await self.social_repo.get_pending_received(user_id)
-        return [
-            {
-                "friendship_id": p.id,
-                "from_user_id": p.user_id,
-                "created_at": p.created_at.isoformat(),
-            }
-            for p in pending
-        ]
+        requests = []
+        for p in pending:
+            if p.user:
+                requests.append({
+                    "friendship_id": p.id,
+                    "from_user_id": p.user.id,
+                    "username": p.user.username,
+                    "created_at": p.created_at.isoformat(),
+                })
+        return {"requests": requests, "total": len(requests)}
 
     async def block_user(self, user_id: int, target_id: int) -> dict:
         """拉黑用户。"""
-        friendship = await self.social_repo.get_friendship(user_id, target_id)
-        if friendship is None:
-            raise NotFoundError("与该用户无好友关系")
-
-        await self.social_repo.update_status(friendship.id, "blocked")
+        if user_id == target_id:
+            raise AppValidationError("不能拉黑自己")
+        await self.social_repo.block_user(user_id, target_id)
         return {"target_id": target_id, "action": "blocked"}
 
     async def remove_friend(self, user_id: int, friend_id: int) -> dict:
@@ -195,32 +180,13 @@ class FriendService:
 
 ---
 
-## 5. 使用方式
-
-```python
-from app.services.friend import FriendService
-
-svc = FriendService(db)
-
-# 发送好友请求
-await svc.add_friend(user_id=1, friend_username="alice")
-
-# 接受好友请求
-await svc.respond_to_request(user_id=3, friendship_id=5, accept=True)
-
-# 获取好友列表
-friends = await svc.get_friend_list(user_id=1)
-```
-
----
-
-## 6. 依赖关系
+## 5. 依赖关系
 
 ```
 FriendService
 ├── SocialRepo (好友 CRUD)
 ├── UserRepository (用户名查询)
-├── NotificationService (创建通知)
-├── core.constants.MAX_FRIENDS
-└── core.exceptions (统一异常)
+├── core.constants.SYSTEM.max_friends
+├── core.exceptions (统一异常)
+└── NotificationService (TODO，尚未实现)
 ```

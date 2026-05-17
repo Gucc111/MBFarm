@@ -21,13 +21,16 @@
 
 | 类名 | 用途 | 类型 | 字段数 |
 |------|------|------|--------|
-| `UserBrief` | 用户摘要（嵌入用） | 响应 | 5 |
+| `UserBrief` | 用户摘要（嵌入用） | 响应 | 4 |
 | `FriendshipResponse` | 好友关系记录 | 响应 | 7 |
 | `AddFriendRequest` | 添加好友请求体 | 请求 | 1 |
 | `RespondFriendRequest` | 审批好友请求体 | 请求 | 2 |
-| `FriendInfoResponse` | 单个好友信息 | 响应 | 6 |
+| `BlockUserRequest` | 拉黑用户请求体 | 请求 | 1 |
 | `FriendListResponse` | 好友列表响应 | 响应 | 3 |
 | `FriendStats` | 好友统计 | 响应 | 3 |
+| `PendingRequestItem` | 待处理请求项 | 响应 | 4 |
+| `PendingRequestsResponse` | 待处理请求列表 | 响应 | 2 |
+| `ActionResponse` | 通用操作响应 | 响应 | 3 |
 
 ---
 
@@ -38,14 +41,18 @@
 | `AddFriendRequest` | `friend_username` | `str`, `min_length=2`, `max_length=32` |
 | `RespondFriendRequest` | `friendship_id` | `int`, 必须 > 0 |
 | `RespondFriendRequest` | `accept` | `bool` |
+| `BlockUserRequest` | `target_user_id` | `int`, 必须 > 0 |
 
 ---
 
 ## 4. 完整 Python 实现
 
 ```python
+"""Social module Pydantic schemas."""
+
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,7 +65,6 @@ class UserBrief(BaseModel):
     username: str
     level: int
     xp: int
-    avatar: Optional[str] = None
 
 
 class FriendshipResponse(BaseModel):
@@ -89,16 +95,9 @@ class RespondFriendRequest(BaseModel):
     accept: bool = Field(description="True 接受，False 拒绝")
 
 
-class FriendInfoResponse(BaseModel):
-    """好友详细信息"""
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    user_id: int
-    friend_id: int
-    friend: UserBrief
-    status: str
-    created_at: datetime
+class BlockUserRequest(BaseModel):
+    """拉黑用户请求"""
+    target_user_id: int = Field(gt=0, description="目标用户 ID")
 
 
 class FriendListResponse(BaseModel):
@@ -113,6 +112,29 @@ class FriendStats(BaseModel):
     pending_count: int
     friends_count: int
     max_friends: int = 50
+
+
+class PendingRequestItem(BaseModel):
+    """待处理请求项"""
+    model_config = ConfigDict(from_attributes=True)
+
+    friendship_id: int
+    from_user_id: int
+    username: str
+    created_at: datetime
+
+
+class PendingRequestsResponse(BaseModel):
+    """待处理请求列表"""
+    requests: list[PendingRequestItem]
+    total: int
+
+
+class ActionResponse(BaseModel):
+    """通用操作响应"""
+    success: bool
+    message: str
+    target_id: int | None = None
 ```
 
 ---
@@ -123,45 +145,46 @@ class FriendStats(BaseModel):
 from fastapi import APIRouter, Depends
 from app.schemas.social import (
     AddFriendRequest, RespondFriendRequest,
-    FriendListResponse, FriendStats,
+    FriendListResponse, FriendStats, ActionResponse,
+    PendingRequestsResponse, BlockUserRequest,
 )
 
-router = APIRouter(prefix="/friends", tags=["friends"])
+router = APIRouter(prefix="/social", tags=["社交"])
 
 
-@router.post("/request", status_code=201)
+@router.post("/friend/request", response_model=ActionResponse)
 async def send_friend_request(
     payload: AddFriendRequest,
     user: User = Depends(get_current_user),
-    svc: FriendService = Depends(get_friend_service),
+    svc: FriendService = Depends(_get_service),
 ):
     """发送好友请求"""
     ...
 
 
-@router.post("/respond")
-async def respond_to_request(
+@router.post("/friend/respond", response_model=ActionResponse)
+async def respond_friend_request(
     payload: RespondFriendRequest,
     user: User = Depends(get_current_user),
-    svc: FriendService = Depends(get_friend_service),
+    svc: FriendService = Depends(_get_service),
 ):
-    """审批好友请求"""
+    """审批好友请求（接受/拒绝合一）"""
     ...
 
 
-@router.get("/", response_model=FriendListResponse)
+@router.get("/friends", response_model=FriendListResponse)
 async def get_friend_list(
     user: User = Depends(get_current_user),
-    svc: FriendService = Depends(get_friend_service),
+    svc: FriendService = Depends(_get_service),
 ):
     """获取好友列表"""
     ...
 
 
-@router.get("/stats", response_model=FriendStats)
+@router.get("/friends/stats", response_model=FriendStats)
 async def get_friend_stats(
     user: User = Depends(get_current_user),
-    svc: FriendService = Depends(get_friend_service),
+    svc: FriendService = Depends(_get_service),
 ):
     """获取好友统计"""
     ...
@@ -178,3 +201,11 @@ social.md 模型采用**单表设计**（一张 `friendships` 表，用 `status`
 ### UserBrief 的复用
 
 `UserBrief` 在好友列表、好友请求、成就解锁等多个模块中复用。当用户模型新增字段时，只需在 `UserBrief` 中添加即可。
+
+### ActionResponse 通用响应
+
+`ActionResponse` 是一个通用响应 schema，用于所有写操作（发送请求、审批、拉黑、解除好友）的统一返回格式。
+
+### 按用户名添加好友
+
+`AddFriendRequest` 使用 `friend_username`（用户名字符串）而非用户 ID，这样前端无需维护用户 ID 映射。

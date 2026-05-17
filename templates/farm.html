@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}我的农场 - MB Farm{% endblock %}
+{% block extra_js %}
+<script>
+  const current_user = {{ current_user | tojson if current_user else 'null' }};
+</script>
+{% endblock %}
+{% block content %}
+<div class="farm-page">
+  <!-- Farm Header -->
+  <div class="farm-header">
+    <div class="user-info">
+      <span class="username" id="header-username">{{ current_user.username if current_user else '玩家' }}</span>
+      <span class="stat-badge" id="header-coins">💰 {{ current_user.coins if current_user else 500 }}</span>
+      <span class="stat-badge" id="header-level">⭐ Lv.{{ current_user.level if current_user else 1 }}</span>
+    </div>
+    <div>
+      <div class="xp-bar-container">
+        <div class="xp-bar-bg">
+          <div class="xp-bar-fill" id="header-xp-bar" style="width: 0%"></div>
+        </div>
+        <div class="xp-label" id="header-xp-text">0 / 100 XP</div>
+      </div>
+      <div class="stamina-bar-container">
+        <div class="stamina-bar-bg">
+          <div class="stamina-bar-fill" id="header-stamina-bar" style="width: 100%"></div>
+        </div>
+        <div class="stamina-label" id="header-stamina-text">100/100</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="farm-tabs">
+    <button class="farm-tab active" data-tab="farm" onclick="switchTab('farm')">🏡 农场</button>
+    <button class="farm-tab" data-tab="inventory" onclick="switchTab('inventory'); loadInventory();">🌱 种子</button>
+    <button class="farm-tab" data-tab="shop" onclick="switchTab('shop'); loadShop();">🏪 商店</button>
+  </div>
+
+  <!-- Farm Grid Panel (always visible) -->
+  <div id="plot-grid" class="plot-grid"></div>
+
+  <!-- Inventory Panel -->
+  <div class="panel" id="inventory-panel"></div>
+
+  <!-- Shop Panel -->
+  <div class="panel" id="shop-panel"></div>
+
+  <!-- Unlock Section -->
+  <div id="unlock-section" style="margin-top:16px;"></div>
+</div>
+
+<script>
+  function xpForNextLevel(level) {
+    const thresholds = [0, 100, 300, 600, 1000, 1500, 2100, 2800, 3600, 4500];
+    const idx = level - 1;
+    const current = thresholds[Math.min(idx, 9)];
+    const next = thresholds[Math.min(idx + 1, 9)];
+    return next - current;
+  }
+</script>
+{% endblock %}

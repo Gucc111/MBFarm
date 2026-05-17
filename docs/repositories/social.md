@@ -7,8 +7,9 @@
 ## 设计决策
 
 - 有向关系操作：发送请求只创建 user_id→friend_id 的记录
-- 双向确认：accept 方法创建 A→B 和 B→A 两条 accepted 记录
-- 好友查询：通过双向 accepted 记录确认真正的双向好友
+- 双向确认：accept_request 方法创建 A→B 和 B→A 两条 accepted 记录
+- 好友查询：`get_friends()` 查询 user_id→X 的 accepted 记录，由 service 层判断双向性
+- 所有时间操作使用 `datetime.now(timezone.utc)`（UTC 时间）
 
 ## Python 实现
 
@@ -17,13 +18,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
-from sqlalchemy import select, delete, update
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.social import Friendship, FriendshipStatus
+from app.models.user import User
 
 
 class SocialRepo:
@@ -36,11 +38,7 @@ class SocialRepo:
     # Friendship CRUD
     # ------------------------------------------------------------------
 
-    async def get_friendship(
-        self,
-        user_id: int,
-        friend_id: int,
-    ) -> Friendship | None:
+    async def get_friendship(self, user_id: int, friend_id: int) -> Friendship | None:
         """获取单向好友关系。"""
         result = await self.db.execute(
             select(Friendship).where(
@@ -50,11 +48,14 @@ class SocialRepo:
         )
         return result.scalar_one_or_none()
 
-    async def send_request(
-        self,
-        user_id: int,
-        friend_id: int,
-    ) -> Friendship:
+    async def get_by_id(self, friendship_id: int) -> Friendship | None:
+        """根据 ID 获取好友关系。"""
+        result = await self.db.execute(
+            select(Friendship).where(Friendship.id == friendship_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def send_request(self, user_id: int, friend_id: int) -> Friendship:
         """发送好友请求（先检查是否有已有记录）。"""
         existing = await self.get_friendship(user_id, friend_id)
         if existing:
@@ -64,9 +65,8 @@ class SocialRepo:
                 raise ValueError("Already friends")
             if existing.status == FriendshipStatus.BLOCKED:
                 raise ValueError("User is blocked")
-            # rejected 或其他状态，允许重新发送
             existing.status = FriendshipStatus.PENDING
-            existing.updated_at = datetime.now()
+            existing.updated_at = datetime.now(timezone.utc)
             await self.db.flush()
             return existing
 
@@ -76,60 +76,57 @@ class SocialRepo:
         await self.db.refresh(friendship)
         return friendship
 
+    async def update_status(self, friendship_id: int, status: FriendshipStatus) -> Friendship:
+        """更新好友关系状态。"""
+        friendship = await self.get_by_id(friendship_id)
+        if friendship is None:
+            raise ValueError("Friendship not found")
+        friendship.status = status
+        friendship.updated_at = datetime.now(timezone.utc)
+        await self.db.flush()
+        return friendship
+
     # ------------------------------------------------------------------
     # Response Operations
     # ------------------------------------------------------------------
 
-    async def accept_request(
-        self,
-        requester_id: int,
-        acceptor_id: int,
-    ) -> None:
+    async def accept_request(self, requester_id: int, acceptor_id: int) -> None:
         """接受好友请求，创建双向 accepted 关系。"""
-        # 更新原请求为 accepted
         req = await self.get_friendship(requester_id, acceptor_id)
         if not req or req.status != FriendshipStatus.PENDING:
             raise ValueError("No pending request found")
         req.status = FriendshipStatus.ACCEPTED
-        req.updated_at = datetime.now()
+        req.updated_at = datetime.now(timezone.utc)
 
-        # 检查反向记录是否存在
         reverse = await self.get_friendship(acceptor_id, requester_id)
         if reverse:
-            if reverse.status in (FriendshipStatus.PENDING,):
+            if reverse.status == FriendshipStatus.PENDING:
                 reverse.status = FriendshipStatus.ACCEPTED
-                reverse.updated_at = datetime.now()
-            # 如果已 accepted 则无需操作
+                reverse.updated_at = datetime.now(timezone.utc)
         else:
-            # 创建反向 accepted 记录
             reverse = Friendship(
                 user_id=acceptor_id,
                 friend_id=requester_id,
                 status=FriendshipStatus.ACCEPTED,
             )
             self.db.add(reverse)
-
         await self.db.flush()
 
-    async def reject_request(
-        self,
-        requester_id: int,
-        rejector_id: int,
-    ) -> None:
+    async def reject_request(self, requester_id: int, rejector_id: int) -> None:
         """拒绝好友请求。"""
         req = await self.get_friendship(requester_id, rejector_id)
         if not req or req.status != FriendshipStatus.PENDING:
             raise ValueError("No pending request found")
         req.status = FriendshipStatus.REJECTED
-        req.updated_at = datetime.now()
+        req.updated_at = datetime.now(timezone.utc)
         await self.db.flush()
 
     # ------------------------------------------------------------------
     # Query Operations
     # ------------------------------------------------------------------
 
-    async def get_pending_requests(self, user_id: int) -> list[Friendship]:
-        """获取用户收到的待处理好友请求。"""
+    async def get_pending_received(self, user_id: int) -> list[Friendship]:
+        """获取用户收到的待处理好友请求（含请求方用户信息）。"""
         result = await self.db.execute(
             select(Friendship)
             .options(selectinload(Friendship.user))
@@ -140,44 +137,44 @@ class SocialRepo:
         )
         return list(result.scalars().all())
 
-    async def get_accepted_friends(self, user_id: int) -> list[Friendship]:
-        """获取用户的所有 accepted 单向关系（包含自己发起和收到的）。"""
+    async def get_friends(self, user_id: int) -> list[Friendship]:
+        """获取用户的所有 accepted 好友关系（user_id→X，含好友信息）。"""
         result = await self.db.execute(
             select(Friendship)
-            .options(selectinload(Friendship.user))
+            .options(selectinload(Friendship.friend))
             .where(
+                Friendship.user_id == user_id,
                 Friendship.status == FriendshipStatus.ACCEPTED,
-                Friendship.friend_id == user_id,
             )
         )
         return list(result.scalars().all())
 
-    async def get_mutual_friends(self, user_id: int) -> list:
-        """获取真正的好友（双向 accepted 关系中的对方用户）。"""
-        from app.models.user import User
-
-        # 子查询：找出 user_id→X 且 X→user_id 都是 accepted 的 X
+    async def count_friends(self, user_id: int) -> int:
+        """统计用户当前好友数量（outgoing accepted）。"""
         result = await self.db.execute(
-            select(User).join(
-                Friendship, User.id == Friendship.user_id
-            ).where(
-                Friendship.friend_id == user_id,
-                Friendship.status == FriendshipStatus.ACCEPTED,
-            ).join(
-                Friendship, Friendship.user_id == User.id
-            ).where(
-                Friendship.friend_id == user_id,
+            select(func.count(Friendship.id)).where(
+                Friendship.user_id == user_id,
                 Friendship.status == FriendshipStatus.ACCEPTED,
             )
         )
-        return list(result.scalars().all())
+        return result.scalar_one()
+
+    async def count_pending_received(self, user_id: int) -> int:
+        """统计收到的待处理请求数。"""
+        result = await self.db.execute(
+            select(func.count(Friendship.id)).where(
+                Friendship.friend_id == user_id,
+                Friendship.status == FriendshipStatus.PENDING,
+            )
+        )
+        return result.scalar_one()
 
     async def is_friend(self, user_id: int, other_id: int) -> bool:
         """检查两人是否互为好友（双向 accepted）。"""
         fwd = await self.get_friendship(user_id, other_id)
         if fwd and fwd.status == FriendshipStatus.ACCEPTED:
             bwd = await self.get_friendship(other_id, user_id)
-            return bwd and bwd.status == FriendshipStatus.ACCEPTED
+            return bwd is not None and bwd.status == FriendshipStatus.ACCEPTED
         return False
 
     async def block_user(self, user_id: int, target_id: int) -> None:
@@ -185,7 +182,7 @@ class SocialRepo:
         existing = await self.get_friendship(user_id, target_id)
         if existing:
             existing.status = FriendshipStatus.BLOCKED
-            existing.updated_at = datetime.now()
+            existing.updated_at = datetime.now(timezone.utc)
         else:
             existing = Friendship(
                 user_id=user_id,
@@ -199,18 +196,40 @@ class SocialRepo:
         """解除好友关系（删除两条双向记录）。"""
         await self.db.execute(
             delete(Friendship).where(
-                Friendship.user_id == user_id,
-                Friendship.friend_id == friend_id,
+                and_(
+                    Friendship.user_id == user_id,
+                    Friendship.friend_id == friend_id,
+                )
             )
         )
         await self.db.execute(
             delete(Friendship).where(
-                Friendship.user_id == friend_id,
-                Friendship.friend_id == user_id,
+                and_(
+                    Friendship.user_id == friend_id,
+                    Friendship.friend_id == user_id,
+                )
             )
         )
         await self.db.flush()
 ```
+
+## 方法汇总
+
+| 方法 | 参数 | 返回值 | 说明 |
+|------|------|--------|------|
+| `get_friendship` | user_id, friend_id | `Friendship \| None` | 获取单向关系 |
+| `get_by_id` | friendship_id | `Friendship \| None` | 按 ID 获取 |
+| `send_request` | user_id, friend_id | `Friendship` | 发送/更新请求 |
+| `update_status` | friendship_id, status | `Friendship` | 更新状态 |
+| `accept_request` | requester_id, acceptor_id | `None` | 接受请求，创建双向 |
+| `reject_request` | requester_id, rejector_id | `None` | 拒绝请求 |
+| `get_pending_received` | user_id | `list[Friendship]` | 收到的待处理请求 |
+| `get_friends` | user_id | `list[Friendship]` | accepted 好友列表 |
+| `count_friends` | user_id | `int` | 好友数量 |
+| `count_pending_received` | user_id | `int` | 待处理请求数 |
+| `is_friend` | user_id, other_id | `bool` | 是否为双向好友 |
+| `block_user` | user_id, target_id | `None` | 拉黑用户 |
+| `remove_friendship` | user_id, friend_id | `None` | 解除双向关系 |
 
 ## 使用示例
 
@@ -227,7 +246,7 @@ await repo.accept_request(requester_id=1, acceptor_id=3)
 
 # 获取好友列表
 repo = SocialRepo(db)
-friends = await repo.get_mutual_friends(user_id=1)
+friends = await repo.get_friends(user_id=1)
 
 # 检查是否是好友
 repo = SocialRepo(db)

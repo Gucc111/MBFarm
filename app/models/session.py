@@ -17,10 +17,15 @@ class Session(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     expires_at = Column(DateTime, nullable=False)
 
-    user = relationship("User", back_populates="sessions")
+    user = relationship("User", back_populates="sessions", lazy="selectin")
 
     def is_expired(self) -> bool:
-        return datetime.now(timezone.utc) >= self.expires_at
+        now = datetime.now(timezone.utc)
+        expires = self.expires_at
+        # Handle both aware and naive datetimes
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return now >= expires
 
     def remaining_seconds(self) -> int:
         delta = self.expires_at - datetime.now(timezone.utc)

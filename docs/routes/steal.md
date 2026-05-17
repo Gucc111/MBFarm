@@ -2,7 +2,9 @@
 
 ## 模块职责
 
-提供偷菜相关的 RESTful API：执行偷菜、查看偷菜记录、查看被偷记录。
+`app/routes/steal.py` — 偷菜相关 API 端点。
+
+路由在 `main.py` 中以 `prefix="/steal"` 注册，`main.py` 统一添加 `/api` 前缀，因此最终路径为 `/api/steal/...`。
 
 ---
 
@@ -28,23 +30,16 @@
 |---|---|---|---|
 | `target_user_id` | int | ✅ | 目标用户 ID |
 
-**查询参数:**
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `plot_index` | int | ❌ | 指定偷哪个 plot（1-25），None = 随机 |
-
 **请求体:** 无
 
-**响应体 (200):**
+**响应体 (200) — `StealResult`:**
 
 ```json
 {
-  "stolen_amount": 50,
-  "remaining_amount": 50,
-  "stealer_user_id": 1,
-  "victim_user_id": 2,
-  "message": "偷成功！获得 50 金币。"
+  "seed_type": "wheat",
+  "seed_name": "小麦",
+  "quantity": 1,
+  "value": 18
 }
 ```
 
@@ -52,24 +47,18 @@
 
 | 状态码 | 错误信息 |
 |---|---|
-| 403 | 不能偷自己 |
-| 404 | 目标无成熟作物 |
-| 429 | 冷却中 / 每日上限 |
+| 403 | 不能偷自己 / 只能偷好友的作物 |
+| 404 | 目标无成熟作物 / 用户不存在 |
+| 409 | 今日偷菜次数已达上限 |
+| 422 | 偷菜冷却中 / 体力不足 |
 
 ---
 
 ### `GET /api/steal/my`
 
-查看我偷了谁的作物（分页）。
+查看我偷了谁的作物（不分页，返回全部记录，按时间倒序）。
 
-**查询参数:**
-
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|---|---|---|---|---|
-| `page` | int | ❌ | 1 | 页码 |
-| `per_page` | int | ❌ | 20 | 每页数量 |
-
-**响应体 (200):**
+**响应体 (200) — `StealHistoryResponse`:**
 
 ```json
 {
@@ -78,13 +67,12 @@
       "id": 1,
       "stealer_id": 1,
       "victim_id": 2,
-      "amount": 50,
-      "stolen_at": "2025-07-10T10:00:00"
+      "stolen_crop_type": "wheat",
+      "quantity": 1,
+      "stolen_at": "2025-07-10T10:00:00+00:00"
     }
   ],
-  "total": 15,
-  "page": 1,
-  "per_page": 20
+  "total": 15
 }
 ```
 
@@ -92,17 +80,20 @@
 
 ### `GET /api/steal/me`
 
-查看谁偷了我。
+查看谁偷了我（不分页，返回全部记录，按时间倒序）。
 
-**响应体 (200):**
+**响应体 (200) — `StealHistoryResponse`:**
 
 ```json
 {
-  "stolen_by": [
+  "records": [
     {
+      "id": 1,
       "stealer_id": 2,
-      "amount": 50,
-      "stolen_at": "2025-07-10T10:00:00"
+      "victim_id": 1,
+      "stolen_crop_type": "carrot",
+      "quantity": 1,
+      "stolen_at": "2025-07-10T10:00:00+00:00"
     }
   ],
   "total": 3
@@ -114,78 +105,67 @@
 ## 完整路由代码
 
 ```python
-"""app/routes/steal.py — Steal crop API routes."""
+"""Steal API routes — steal crops from friends."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_db, get_current_user
+from app.core.dependencies import get_current_user, get_db
 from app.models.user import User
+from app.schemas.steal import StealHistoryResponse, StealResult
 from app.services.steal import StealService
-from app.schemas.steal import StealResult, StolenCropRecord
 
-router = APIRouter(prefix="/api/steal", tags=["steal"])
+router = APIRouter(prefix="/steal", tags=["偷菜"])
+
+
+def _get_service(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> StealService:
+    return StealService(db)
 
 
 @router.post(
     "/{target_user_id}",
     response_model=StealResult,
+    status_code=status.HTTP_200_OK,
     summary="偷菜",
-    status_code=200,
 )
 async def steal_crop(
     target_user_id: int,
-    plot_index: int | None = Query(None, ge=1, le=25),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    service: StealService = Depends(lambda: StealService(db)),
+    svc: StealService = Depends(_get_service),
+    user: User = Depends(get_current_user),
 ):
     """偷取目标用户的成熟作物。"""
-    return await service.steal(
-        user_id=current_user.id,
-        target_user_id=target_user_id,
-        plot_index=plot_index,
-    )
+    return await svc.steal(user.id, target_user_id)
 
 
 @router.get(
     "/my",
-    response_model=dict,
+    response_model=StealHistoryResponse,
     summary="我偷了谁的",
 )
 async def get_my_stolen(
-    page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    service: StealService = Depends(lambda: StealService(db)),
+    svc: StealService = Depends(_get_service),
+    user: User = Depends(get_current_user),
 ):
     """查看我偷了谁的作物。"""
-    return await service.get_stolen_crops(
-        user_id=current_user.id,
-        page=page,
-        per_page=per_page,
-    )
+    return await svc.get_my_stolen(user.id)
 
 
 @router.get(
     "/me",
-    response_model=dict,
+    response_model=StealHistoryResponse,
     summary="谁偷了我",
 )
 async def get_being_stolen(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    service: StealService = Depends(lambda: StealService(db)),
+    svc: StealService = Depends(_get_service),
+    user: User = Depends(get_current_user),
 ):
     """查看谁偷了我。"""
-    records = await service.get_being_stolen(user_id=current_user.id)
-    return {
-        "stolen_by": records,
-        "total": len(records),
-    }
+    return await svc.get_being_stolen(user.id)
 ```
 
 ---
@@ -194,13 +174,43 @@ async def get_being_stolen(
 
 | HTTP 状态码 | 场景 |
 |---|---|
-| 200 | 偷菜成功 |
-| 400 | 参数错误 / 冷却中 / 每日上限 |
+| 200 | 偷菜成功 / 查询成功 |
 | 401 | 未认证 |
-| 403 | 偷自己 |
-| 404 | 无成熟作物 |
-| 429 | 频率限制 |
+| 403 | 偷自己 / 不是好友 |
+| 404 | 无成熟作物 / 用户不存在 |
+| 409 | 达到每日偷菜上限 |
+| 422 | 偷菜冷却中 / 体力不足 |
 
 ---
 
-*文档生成时间: 2025-07-10*
+## 使用示例
+
+```bash
+# 偷菜
+curl -X POST -b "session_token=xxx" \
+  http://localhost:8000/api/steal/2
+
+# 查看我偷了谁的
+curl -b "session_token=xxx" \
+  http://localhost:8000/api/steal/my
+
+# 查看谁偷了我
+curl -b "session_token=xxx" \
+  http://localhost:8000/api/steal/me
+```
+
+---
+
+## 设计决策
+
+### 路径参数 vs 请求体
+
+`target_user_id` 作为路径参数（`/{target_user_id}`），而非请求体字段。这避免了请求体的需要，使得偷菜操作可以通过简单的 POST 调用完成。
+
+### 不指定地块
+
+当前实现不支持指定偷哪个地块（无 `plot_index` 参数）。从目标用户所有成熟作物中随机选取。如后续需要，可在 `steal` 方法中添加 `plot_index` 参数。
+
+### 不分页
+
+`/my` 和 `/me` 返回所有记录（不分页）。考虑到偷菜频率较低（每日上限 3 次），记录量不大。如后续需要分页，可在 service 层添加 `limit/offset` 参数。

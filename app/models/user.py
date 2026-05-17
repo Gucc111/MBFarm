@@ -10,7 +10,7 @@ from app.core.database import Base
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(32), unique=True, nullable=False, index=True)
     password_hash = Column(String(128), nullable=False)
     coins = Column(Integer, default=500, nullable=False)
@@ -18,6 +18,7 @@ class User(Base):
     xp = Column(Integer, default=0, nullable=False)
     level = Column(Integer, default=1, nullable=False)
     last_active_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     __table_args__ = (

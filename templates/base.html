@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}MB Farm{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌱</text></svg>">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/navigation.css">
+  <link rel="stylesheet" href="/static/css/farm.css">
+  {% block extra_css %}{% endblock %}
+</head>
+<body data-page="{{ page_name | default('farm') }}">
+
+  <!-- Loading Overlay -->
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+  </div>
+
+  <!-- Navbar -->
+  <nav class="navbar">
+    <a href="/farm" class="navbar-brand">🌱 MB Farm</a>
+    <div class="navbar-nav">
+      <a href="/farm" class="nav-link{% if page_name == 'farm' %} active{% endif %}">🏡 我的农场</a>
+      <a href="/friend-farm" class="nav-link{% if page_name == 'friend-farm' %} active{% endif %}">👥 好友农场</a>
+    </div>
+    <div class="navbar-right">
+      <div class="nav-user">
+        <span class="stat-icon">👤</span>
+        <span id="nav-username">{{ current_user.username if current_user else '游客' }}</span>
+      </div>
+      <button class="nav-logout" onclick="doLogout()">退出</button>
+    </div>
+  </nav>
+
+  <!-- Page Content -->
+  <main class="page-content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+
+  <!-- Plant Modal -->
+  <div class="modal-overlay" id="plant-modal-overlay">
+    <div class="modal">
+      <button class="modal-close" onclick="closePlantModal()">✕</button>
+      <h3>🌱 选择种子</h3>
+      <div class="seed-list" id="plant-seed-list"></div>
+    </div>
+  </div>
+
+  <!-- Shared Scripts -->
+  <script src="/static/js/crops.js"></script>
+  <script src="/static/js/toast.js"></script>
+  <script src="/static/js/api.js"></script>
+  {% block extra_js %}{% endblock %}
+  <script src="/static/js/main.js"></script>
+  {% if page_name == 'farm' %}
+  <script src="/static/js/farm.js"></script>
+  {% endif %}
+  {% if page_name == 'friend-farm' %}
+  <script src="/static/js/social.js"></script>
+  {% endif %}
+</body>
+</html>

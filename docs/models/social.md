@@ -36,8 +36,8 @@ CREATE TABLE friendships (
     user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     friend_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     status     TEXT(16)  NOT NULL CHECK(status IN ('pending', 'accepted', 'rejected', 'blocked')),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL,
 
     UNIQUE(user_id, friend_id)
 );
@@ -50,18 +50,19 @@ CREATE INDEX idx_friendships_friend ON friendships(friend_id);
 
 | 字段      | 类型       | 约束                                    | 说明                                  |
 |-----------|------------|-----------------------------------------|---------------------------------------|
-| id        | Integer    | PK, AUTOINCREMENT                       | 自增主键                              |
-| user_id   | Integer    | FK → users.id, NOT NULL, CASCADE        | 发起方用户                            |
-| friend_id | Integer    | FK → users.id, NOT NULL, CASCADE        | 目标用户                              |
-| status    | Text(16)   | NOT NULL, CHECK enum                    | 关系状态                              |
-| created_at| DateTime   | DEFAULT CURRENT_TIMESTAMP               | 请求创建时间                          |
-| updated_at| DateTime   | DEFAULT CURRENT_TIMESTAMP               | 最后更新时间                          |
+| id        | BigInteger | PK, AUTOINCREMENT                       | 自增主键                              |
+| user_id   | BigInteger | FK → users.id, NOT NULL, CASCADE, INDEX | 发起方用户                            |
+| friend_id | BigInteger | FK → users.id, NOT NULL, CASCADE, INDEX | 目标用户                              |
+| status    | Text(16)   | NOT NULL, CHECK enum, DEFAULT pending   | 关系状态                              |
+| created_at| DateTime   | NOT NULL, DEFAULT UTC now()             | 请求创建时间                          |
+| updated_at| DateTime   | NOT NULL, DEFAULT UTC now(), ON UPDATE  | 最后更新时间                          |
 
 ## 关系说明
 
 - **User (user_id) → Friendship**：一对多（一个用户发起的众多请求）
 - **User (friend_id) → Friendship**：一对多（一个用户收到的众多请求）
 - **级联删除**：删除用户时，其发起和收到的所有好友请求自动清除
+- **relationship**：`user` 和 `friend` 两个关系均使用 `lazy="selectin"`，无 `back_populates`（User 模型不维护反向引用）
 - **自引用 FK**：user_id 和 friend_id 都指向 users 表
 
 ## Python 实现
@@ -71,19 +72,19 @@ CREATE INDEX idx_friendships_friend ON friendships(friend_id);
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import StrEnum
 
 from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
-    Integer,
     String,
     UniqueConstraint,
-    CheckConstraint,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import relationship
 
 from app.core.database import Base
 
@@ -101,22 +102,29 @@ class Friendship(Base):
 
     __tablename__ = "friendships"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    friend_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    friend_id = Column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    status: Mapped[FriendshipStatus] = mapped_column(
+    status = Column(
         String(16),
         nullable=False,
         server_default=FriendshipStatus.PENDING,
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default="CURRENT_TIMESTAMP")
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default="CURRENT_TIMESTAMP", onupdate="CURRENT_TIMESTAMP"
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
     )
+
+    # Relationships (lazy-loaded, used by selectinload in the repo)
+    user = relationship("User", foreign_keys=[user_id], lazy="selectin")
+    friend = relationship("User", foreign_keys=[friend_id], lazy="selectin")
 
     # Constraints
     __table_args__ = (
@@ -127,53 +135,24 @@ class Friendship(Base):
         ),
     )
 
-    # Relationships
-    user = relationship("User", foreign_keys=[user_id], back_populates="sent_friendships")
-    friend = relationship("User", foreign_keys=[friend_id], back_populates="received_friendships")
-
-    # ------------------------------------------------------------------
-    # Helper methods
-    # ------------------------------------------------------------------
-
     def accept(self) -> None:
-        """接受好友请求。"""
         self.status = FriendshipStatus.ACCEPTED
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(timezone.utc)
 
     def reject(self) -> None:
-        """拒绝好友请求。"""
         self.status = FriendshipStatus.REJECTED
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(timezone.utc)
 
     def block(self) -> None:
-        """拉黑对方。"""
         self.status = FriendshipStatus.BLOCKED
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(timezone.utc)
 
     @property
     def is_active(self) -> bool:
-        """是否为活跃关系（pending 或 accepted）。"""
         return self.status in (FriendshipStatus.PENDING, FriendshipStatus.ACCEPTED)
 ```
 
-```python
-# --- In app/models/user.py, add these relationships: ---
-
-# class User(Base):
-#     ...
-#     sent_friendships: Mapped[list["Friendship"]] = relationship(
-#         "Friendship",
-#         foreign_keys="[Friendship.user_id]",
-#         back_populates="user",
-#         lazy="selectin",
-#     )
-#     received_friendships: Mapped[list["Friendship"]] = relationship(
-#         "Friendship",
-#         foreign_keys="[Friendship.friend_id]",
-#         back_populates="friend",
-#         lazy="selectin",
-#     )
-```
+> **注**：User 模型无需添加反向 relationship。Friendship 通过 `user` 和 `friend` 两个关系直接引用 User，仓库层通过 `selectinload(Friendship.user)` / `selectinload(Friendship.friend)` 预加载用户数据。
 
 ## 使用示例
 
@@ -206,20 +185,18 @@ async def send_friend_request(db: AsyncSession, user_id: int, friend_id: int) ->
 
 async def accept_friend_request(db: AsyncSession, requester_id: int, acceptor_id: int) -> None:
     """接受好友请求，并创建双向关系。"""
-    # 确认原请求
-    result = await db.execute(
+    req = await db.execute(
         select(Friendship).where(
             Friendship.user_id == requester_id,
             Friendship.friend_id == acceptor_id,
             Friendship.status == FriendshipStatus.PENDING,
         )
     )
-    req = result.scalar_one_or_none()
+    req = req.scalar_one_or_none()
     if not req:
         raise ValueError("No pending request found")
     req.accept()
 
-    # 创建反向 accepted 记录
     reverse = Friendship(
         user_id=acceptor_id,
         friend_id=requester_id,
@@ -230,7 +207,6 @@ async def accept_friend_request(db: AsyncSession, requester_id: int, acceptor_id
 
 async def get_mutual_friends(db: AsyncSession, user_id: int) -> list:
     """获取互为好友的用户列表。"""
-    # 找出自己是 user_id 的 accepted 记录，然后找对方的反向 accepted 记录
     from app.models.user import User
 
     result = await db.execute(

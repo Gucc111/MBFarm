@@ -1,4 +1,4 @@
-"""FastAPI dependencies: database session and service factories."""
+"""FastAPI dependencies: database session, auth, and service factories."""
 
 from typing import AsyncGenerator
 
@@ -41,6 +41,8 @@ async def get_current_user(
     return user
 
 
+# ── Repository factories ─────────────────────────────────────────────────────
+
 def get_user_repo(db: AsyncSession = Depends(get_db)) -> "UserRepository":  # type: ignore[name-defined]
     """Dependency: UserRepository bound to the current db session."""
     from app.repositories.user_repo import UserRepository
@@ -53,6 +55,14 @@ def get_session_repo(db: AsyncSession = Depends(get_db)) -> "SessionRepository":
     return SessionRepository(db)
 
 
+def get_farm_repo(db: AsyncSession = Depends(get_db)) -> "FarmRepo":  # type: ignore[name-defined]
+    """Dependency: FarmRepo bound to the current db session."""
+    from app.repositories.farm_repo import FarmRepo
+    return FarmRepo(db)
+
+
+# ── Service factories ────────────────────────────────────────────────────────
+
 def get_auth_service(
     user_repo: "UserRepository" = Depends(get_user_repo),  # type: ignore[name-defined]
     session_repo: "SessionRepository" = Depends(get_session_repo),  # type: ignore[name-defined]
@@ -61,3 +71,15 @@ def get_auth_service(
     """Dependency: AuthService wired with repositories and db session."""
     from app.services.auth_service import AuthService
     return AuthService(db, user_repo, session_repo)
+
+
+def get_social_repo(db: AsyncSession = Depends(get_db)) -> "SocialRepo":  # type: ignore[name-defined]
+    """Dependency: SocialRepo bound to the current db session."""
+    from app.repositories.social_repo import SocialRepo
+    return SocialRepo(db)
+
+
+def get_friend_service(db: AsyncSession = Depends(get_db)) -> "FriendService":  # type: ignore[name-defined]
+    """Dependency: FriendService bound to the current db session."""
+    from app.services.friend import FriendService
+    return FriendService(db)
