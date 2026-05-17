@@ -20,18 +20,20 @@
 
 ## 2. 路由列表
 
+> **路径前缀**: Router prefix `/auth` + `main.py` 挂载前缀 `/api` = 完整路径 `/api/auth/...`
+
 | 方法 | 路径 | 描述 | 请求体 | 响应 | 异常 |
 |------|------|------|--------|------|------|
-| `POST` | `/auth/register` | 用户注册 | `UserCreate` | `201` + `UserResponse` | `409` 用户名重复, `422` 校验失败 |
-| `POST` | `/auth/login` | 用户登录 | `UserLogin` | `200` + `LoginResponse` + `Set-Cookie` | `401` 凭证错误, `422` 校验失败 |
-| `POST` | `/auth/logout` | 用户登出 | 无 | `200` + `{"message": "已登出"}` + `Clear-Cookie` | — |
-| `GET` | `/auth/me` | 获取当前用户 | 无 | `200` + `UserResponse` | `401` 未认证 |
+| `POST` | `/api/auth/register` | 用户注册 | `UserCreate` | `201` + `UserResponse` | `409` 用户名重复, `422` 校验失败 |
+| `POST` | `/api/auth/login` | 用户登录 | `UserLogin` | `200` + `LoginResponse` + `Set-Cookie` | `401` 凭证错误, `422` 校验失败 |
+| `POST` | `/api/auth/logout` | 用户登出 | 无 | `200` + `{"message": "已登出"}` + `Clear-Cookie` | — |
+| `GET` | `/api/auth/me` | 获取当前用户 | 无 | `200` + `UserResponse` | `401` 未认证 |
 
 ---
 
 ## 3. 请求/响应示例
 
-### 3.1 注册 — `POST /auth/register`
+### 3.1 注册 — `POST /api/auth/register`
 
 **请求体：**
 
@@ -46,10 +48,11 @@
 
 ```json
 {
-  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "id": 1,
   "username": "player1",
-  "gold": 100,
-  "energy": 100,
+  "coins": 500,
+  "xp": 0,
+  "level": 1,
   "created_at": "2025-01-15T08:30:00Z"
 }
 ```
@@ -58,13 +61,16 @@
 
 ```json
 {
-  "detail": "用户名已存在"
+  "error": {
+    "code": "CONFLICT",
+    "message": "用户名已存在"
+  }
 }
 ```
 
 ---
 
-### 3.2 登录 — `POST /auth/login`
+### 3.2 登录 — `POST /api/auth/login`
 
 **请求体：**
 
@@ -79,36 +85,40 @@
 
 ```json
 {
-  "message": "登录成功",
   "user": {
-    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "id": 1,
     "username": "player1",
-    "gold": 100,
-    "energy": 100,
+    "coins": 500,
+    "xp": 0,
+    "level": 1,
     "created_at": "2025-01-15T08:30:00Z"
-  }
+  },
+  "message": "登录成功"
 }
 ```
 
 **同时设置 Cookie：**
 
 ```
-Set-Cookie: session_token=abc123def456...; HttpOnly; Secure; SameSite=Lax; Path=/
+Set-Cookie: session_token=abc123def456...; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800
 ```
 
 **凭证错误响应 (`401`)：**
 
 ```json
 {
-  "detail": "用户名或密码错误"
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "用户名或密码错误"
+  }
 }
 ```
 
 ---
 
-### 3.3 登出 — `POST /auth/logout`
+### 3.3 登出 — `POST /api/auth/logout`
 
-**请求体：** 无
+**请求体：** 无（从 Cookie 中读取 session_token）
 
 **成功响应 (`200`)：**
 
@@ -121,23 +131,24 @@ Set-Cookie: session_token=abc123def456...; HttpOnly; Secure; SameSite=Lax; Path=
 **同时清除 Cookie：**
 
 ```
-Set-Cookie: session_token=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0
+Set-Cookie: session_token=; Path=/; Max-Age=0
 ```
 
 ---
 
-### 3.4 获取当前用户 — `GET /auth/me`
+### 3.4 获取当前用户 — `GET /api/auth/me`
 
-**请求体：** 无
+**请求体：** 无（从 Cookie 中读取 session_token）
 
 **成功响应 (`200`)：**
 
 ```json
 {
-  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "id": 1,
   "username": "player1",
-  "gold": 100,
-  "energy": 100,
+  "coins": 500,
+  "xp": 0,
+  "level": 1,
   "created_at": "2025-01-15T08:30:00Z"
 }
 ```
@@ -146,7 +157,10 @@ Set-Cookie: session_token=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0
 
 ```json
 {
-  "detail": "未登录"
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "未登录"
+  }
 }
 ```
 
@@ -154,24 +168,26 @@ Set-Cookie: session_token=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0
 
 ## 4. 实现方案
 
-完整实现代码：
-
 ```python
-"""
-app/routes/auth.py — 认证 API 路由
+"""Authentication API routes."""
 
-定义用户注册、登录、登出和获取当前用户信息的 RESTful 端点。
-"""
-
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Cookie, Depends, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db
-from app.core.exceptions import AppHTTPException
-from app.schemas.user import UserCreate, UserResponse, UserLogin, LoginResponse
+from app.core.exceptions import UnauthorizedError
+from app.core.security import clear_session_cookie, set_session_cookie
+from app.repositories.user_repo import SessionRepository, UserRepository
+from app.schemas.user import UserCreate, UserLogin, LoginResponse, UserResponse
 from app.services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["认证"])
+
+
+def _get_service(db: AsyncSession) -> AuthService:
+    """内联工厂函数：创建 AuthService 实例，共享同一 db 会话。"""
+    return AuthService(db, UserRepository(db), SessionRepository(db))
 
 
 @router.post(
@@ -182,32 +198,10 @@ router = APIRouter(prefix="/auth", tags=["认证"])
 )
 async def register(
     user_data: UserCreate,
-    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    注册新用户。
-
-    - `username`: 唯一用户名，3-32 位字母数字及下划线；
-    - `password`: 明文密码，6-128 位，注册时会在 `AuthService` 中哈希。
-
-    返回创建的 `UserResponse`（不包含密码字段）。
-    """
-    service = AuthService(db)
-
-    try:
-        user = await service.register(user_data)
-    except AppHTTPException as e:
-        if e.code == 409:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="用户名已存在",
-            )
-        raise HTTPException(
-            status_code=e.code,
-            detail=e.message,
-        )
-
+    service = _get_service(db)
+    user = await service.register(user_data.username, user_data.password)
     return user
 
 
@@ -222,36 +216,12 @@ async def login(
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    用户登录，成功后设置 `session_token` Cookie。
-
-    - `username`: 注册时的用户名；
-    - `password`: 注册时的明文密码。
-
-    返回登录响应 + `Set-Cookie` 头。
-    """
-    service = AuthService(db)
-
-    try:
-        user, session_token = await service.login(login_data)
-    except AppHTTPException as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户名或密码错误",
-        )
-
-    response.set_cookie(
-        key="session_token",
-        value=session_token,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        path="/",
-    )
-
+    service = _get_service(db)
+    session = await service.login(login_data.username, login_data.password)
+    set_session_cookie(response, session.token)
     return LoginResponse(
+        user=UserResponse.model_validate(session.user),
         message="登录成功",
-        user=user,
     )
 
 
@@ -261,24 +231,18 @@ async def login(
 )
 async def logout(
     response: Response,
+    session_token: str | None = Cookie(default=None, alias="session_token"),
     db: AsyncSession = Depends(get_db),
-    # 需要用户已认证才能登出
-    # _ = Depends(get_current_user),  # 取消注释以启用强制认证
 ):
-    """
-    用户登出，清除 `session_token` Cookie。
-    """
-    response.set_cookie(
-        key="session_token",
-        value="",
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        path="/",
-        max_age=0,
-    )
+    if session_token:
+        session_repo = SessionRepository(db)
+        session = await session_repo.get_by_token(session_token)
+        if session:
+            await session_repo.delete(session)
 
-    return {"message": "已登出"}
+    resp = JSONResponse(content={"message": "已登出"})
+    clear_session_cookie(resp)
+    return resp
 
 
 @router.get(
@@ -287,24 +251,16 @@ async def logout(
     status_code=status.HTTP_200_OK,
     summary="获取当前用户信息",
 )
-async def get_current_user_info(
+async def get_me(
+    session_token: str | None = Cookie(default=None, alias="session_token"),
     db: AsyncSession = Depends(get_db),
-    # 需要用户已认证
-    # current_user = Depends(get_current_user),  # 取消注释以启用强制认证
 ):
-    """
-    获取当前已认证用户的信息。
+    if not session_token:
+        raise UnauthorizedError("未登录")
 
-    需要依赖 `core/dependencies.py` 中定义的 `get_current_user` 依赖，
-    该依赖从 Cookie 中提取 `session_token` 并验证有效性。
-    """
-    # 以下代码在实现 get_current_user 后可直接使用：
-    # return current_user
-
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="未登录",
-    )
+    service = _get_service(db)
+    user = await service.get_current_user(session_token)
+    return user
 ```
 
 ---
@@ -314,50 +270,25 @@ async def get_current_user_info(
 ### 5.1 登录流程
 
 ```
-┌──────────┐          ┌──────────────┐          ┌──────────────┐
-│  前端     │          │  auth 路由层  │          │ auth_service  │
-│  (浏览器)  │          │  (app/routes) │          │  (app/services)│
-└────┬─────┘          └──────┬───────┘          └──────┬───────┘
-     │                       │                         │
-     │  POST /auth/login     │                         │
-     │  {username, password} │                         │
-     ├──────────────────────►│                         │
-     │                       │  AuthService.login()    │
-     │                       ├────────────────────────►│
-     │                       │                         │
-     │                       │  (验证凭证)              │
-     │                       │                         │
-     │                       │  (生成 session_token)     │
-     │                       │                         │
-     │  200 + JSON           │                         │
-     │  + Set-Cookie         │                         │
-     │  header               │                         │
-     │◄──────────────────────┤                         │
-     │                       │                         │
-     │  浏览器自动存储 Cookie │                         │
-     └───────────────────────┴─────────────────────────┘
+Browser ── POST /api/auth/login ──→ Server
+                     │                       │
+                     │              AuthService.login()
+                     │              验证凭证 + 创建 Session
+                     │                       │
+           ←── 200 + JSON + Set-Cookie ──── │
+               session_token=xxx
 ```
 
 ### 5.2 后续请求携带 Cookie
 
 ```
-┌──────────┐          ┌──────────────┐
-│  前端     │          │  auth 路由层  │
-│  (浏览器)  │          │  (app/routes) │
-└────┬─────┘          └──────┬───────┘
-     │                       │
-     │  GET /auth/me         │
-     │  Cookie:              │
-     │  session_token=xxx    │
-     ├──────────────────────►│
-     │                       │  get_current_user 依赖:
-     │                       │  1. 从 Cookie 提取 token
-     │                       │  2. 查询 Session 模型
-     │                       │  3. 验证 token 有效性
-     │                       │  4. 返回 User 对象
-     │                       │
-     │  200 + UserResponse   │
-     │◄──────────────────────┤
+Browser ── GET /api/auth/me ──→ Server
+Cookie: session_token=xxx        │
+                                 │  1. 从 Cookie 提取 token
+                                 │  2. SessionRepository.get_by_token()
+                                 │  3. 验证有效性
+                                 │  4. UserRepository.get_by_id()
+           ←── 200 + UserResponse │
 ```
 
 ### 5.3 Cookie 属性
@@ -366,10 +297,9 @@ async def get_current_user_info(
 |------|------|------|
 | `Name` | `session_token` | 令牌名称 |
 | `HttpOnly` | `true` | 禁止 JS 访问，防 XSS |
-| `Secure` | `true` | 仅 HTTPS 传输（开发环境可设为 `false`） |
-| `SameSite` | `lax` | 防 CSRF，允许顶级导航 GET 请求 |
+| `Secure` | `false`（开发）/ `true`（生产） | 开发环境为 HTTP |
+| `SameSite` | `lax` | 防 CSRF |
 | `Path` | `/` | 全站有效 |
-| `Max-Age` | 可选 | 会话结束后自动过期 |
 
 ---
 
@@ -378,34 +308,42 @@ async def get_current_user_info(
 ```
 routes/auth.py                          services/auth_service.py
 ┌──────────────────────┐               ┌──────────────────────┐
-│  register()          │               │  register()          │
-│  ├─ user_data: UserCreate          │  ├─ user_repo.create() │
-│  ├─ AuthService(db)                │  ├─ security.hash()    │
-│  └─ return UserResponse            │  └─ return User        │
-│                                    │                       │
-│  login()                     │     │  login()               │
-│  ├─ login_data: UserLogin    │     │  ├─ user_repo.find()   │
-│  ├─ AuthService(db)          │     │  ├─ security.verify()  │
-│  ├─ return (user, token)     │     │  ├─ session_repo.create()
-│  └─ (由路由设置 Cookie)       │     │  └─ return (user, token)
-│                                    │                       │
-│  logout()                      │     │  (注销逻辑可选在此)    │
-│  └─ (由路由清除 Cookie)         │     │                       │
+│  _get_service(db)    │               │  register()          │
+│  → AuthService(      │               │  ├─ user_repo.create()
+│      db,             │               │  ├─ hash_password()
+│      UserRepository, │               │  └─ 使用 INIT_USER 常量
+│      SessionRepo)    │               │                       │
+│                      │               │  login()              │
+│  register            │               │  ├─ user_repo.find()
+│  → service.register()│               │  ├─ verify_password()
+│  → return User       │               │  ├─ delete_all旧session
+│                      │               │  └─ session_repo.create()
+│  login               │               │                       │
+│  → service.login()   │               │  logout()             │
+│  → set_session_cookie│               │  → session_repo.delete()
+│  → LoginResponse     │               │                       │
+│                      │               │  get_current_user()   │
+│  logout              │               │  → session_repo.get_by_token()
+│  → 清除 Cookie       │               │  → user_repo.get_by_id()
+│                      │               │                       │
+│  get_me              │               │                       │
+│  → service.get_      │               │                       │
+│     current_user()   │               │                       │
 └──────────────────────┘               └──────────────────────┘
 ```
 
 ### 集成要点
 
-1. **每次请求创建 `AuthService` 实例**（轻量，仅持有 `AsyncSession` 引用）；
-2. **`AuthService` 通过 DI 获取 `AsyncSession`**，避免连接泄漏；
-3. **认证 Cookie 的设置/清除**在路由层完成（关注点分离：路由负责 HTTP 协议细节，Service 负责业务逻辑）；
-4. **异常映射**：`AppHTTPException` 被转换为 `HTTPException`，确保前端接收到标准的 FastAPI 错误格式。
+1. **使用 `_get_service(db)` 内联工厂**：确保 Service 和两个 Repository 共享同一 `AsyncSession`
+2. **Cookie 设置/清除在路由层完成**：关注点分离——路由负责 HTTP 协议细节，Service 负责业务逻辑
+3. **异常由全局处理器统一转换**：`AppError` → JSON 响应（由 `main.py` 中的全局处理器处理）
+4. **路由前缀**：Router `/auth` + `main.py` 挂载 `/api` = 完整路径 `/api/auth/...`
 
 ---
 
 ## 7. 后续扩展
 
-- **验证码/防刷**：在注册接口前集成图形验证码或手机/邮箱验证；
+- **验证码/防刷**：在注册接口前集成图形验证码；
 - **多端登录限制**：在 `AuthService.login()` 中实现同一账号单点登录策略；
 - **记住我**：区分短期 Session 和长期 Token，提供 `remember_me` 选项；
 - **WebSocket 通知**：登录成功后建立 WebSocket 连接，推送偷菜/成熟提醒。

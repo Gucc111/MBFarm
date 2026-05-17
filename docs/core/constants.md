@@ -152,16 +152,29 @@ LEVEL_XP_THRESHOLD: Final[tuple[int, ...]] = (
 MAX_LEVEL: Final[int] = len(LEVEL_XP_THRESHOLD) - 1  # = 10
 
 def get_level_by_xp(xp: int) -> int:
-    """根据累计经验值计算当前等级"""
-    for level, threshold in enumerate(LEVEL_XP_THRESHOLD):
-        if xp < threshold:
-            return level  # 未满当前等级，返回上一级
-    return MAX_LEVEL
+    """根据累计经验值计算当前等级（返回 1-based 等级）。
+
+    LEVEL_XP_THRESHOLD[i] 表示达到 i+1 级所需的累计经验值。
+    例: xp=0 → 1级, xp=100 → 2级
+    """
+    level = 1
+    for i in range(1, len(LEVEL_XP_THRESHOLD)):
+        if xp >= LEVEL_XP_THRESHOLD[i]:
+            level = i + 1
+        else:
+            break
+    return level
+
 
 def xp_for_next_level(level: int) -> int:
-    """获取升到下一级所需经验（当前等级累计阈值 -> 下一级累计阈值）"""
-    current = LEVEL_XP_THRESHOLD[min(level, MAX_LEVEL)]
-    next_threshold = LEVEL_XP_THRESHOLD[min(level + 1, MAX_LEVEL)]
+    """获取升到下一级所需经验。
+
+    参数 level 为 1-based 等级（1=1级, 2=2级, ...）。
+    满级时返回 0。
+    """
+    idx = level - 1  # 转为 0-based 索引
+    current = LEVEL_XP_THRESHOLD[min(idx, MAX_LEVEL)]
+    next_threshold = LEVEL_XP_THRESHOLD[min(idx + 1, MAX_LEVEL)]
     return next_threshold - current
 ```
 
@@ -320,24 +333,36 @@ STAMINA: Final[StaminaConfig] = StaminaConfig(
 # ─────────────────────────────────────────────
 
 LEVEL_XP_THRESHOLD: Final[tuple[int, ...]] = (
-    0, 0, 100, 300, 600, 1000, 1500, 2100, 2800, 3600, 4500,
+    0,       # 1 级（初始）
+    100,     # 2 级
+    300,     # 3 级
+    600,     # 4 级
+    1000,    # 5 级
+    1500,    # 6 级
+    2100,    # 7 级
+    2800,    # 8 级
+    3600,    # 9 级
+    4500,    # 10 级
 )
-# index 0 = level 0 (placeholder), index 1 = level 1 threshold, ...
-# Simplify: index = level, threshold = XP needed to reach that level
-LEVEL_XP_THRESHOLD = (0, 100, 300, 600, 1000, 1500, 2100, 2800, 3600, 4500)
-MAX_LEVEL: Final[int] = len(LEVEL_XP_THRESHOLD) - 1
+MAX_LEVEL: Final[int] = len(LEVEL_XP_THRESHOLD) - 1  # = 10
 
 
 def get_level_by_xp(xp: int) -> int:
-    for level, threshold in enumerate(LEVEL_XP_THRESHOLD):
-        if xp < threshold:
-            return level
-    return MAX_LEVEL
+    """根据累计经验值计算当前等级（返回 1-based 等级）"""
+    level = 1
+    for i in range(1, len(LEVEL_XP_THRESHOLD)):
+        if xp >= LEVEL_XP_THRESHOLD[i]:
+            level = i + 1
+        else:
+            break
+    return level
 
 
 def xp_for_next_level(level: int) -> int:
-    current = LEVEL_XP_THRESHOLD[min(level, MAX_LEVEL)]
-    next_threshold = LEVEL_XP_THRESHOLD[min(level + 1, MAX_LEVEL)]
+    """获取升到下一级所需经验（level 为 1-based，满级返回 0）"""
+    idx = level - 1
+    current = LEVEL_XP_THRESHOLD[min(idx, MAX_LEVEL)]
+    next_threshold = LEVEL_XP_THRESHOLD[min(idx + 1, MAX_LEVEL)]
     return next_threshold - current
 
 
