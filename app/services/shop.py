@@ -59,7 +59,7 @@ class ShopService:
         # 加种子到背包
         await self.farm_repo.add_item(self.user_id, "seed", seed_type, quantity)
 
-        await self.db.flush()
+        await self.db.commit()
 
         return {
             "seed_type": seed_type,

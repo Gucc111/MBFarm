@@ -148,12 +148,15 @@ class FarmService:
         await self._ensure_stamina(STAMINA.plant_cost)
 
         # 种植
-        return await self.farm_repo.plant_crop(
+        crop = await self.farm_repo.plant_crop(
             plot_id=plot.id,
             user_id=self.user_id,
             seed_type=seed_type,
             duration=seed_config.grow_time,
         )
+        await self._persist_user(user)
+        await self.db.commit()
+        return crop
 
     # ------------------------------------------------------------------
     # 收获
@@ -199,6 +202,7 @@ class FarmService:
 
         user.last_active_at = datetime.now(timezone.utc)
         await self._persist_user(user)
+        await self.db.commit()
 
         return {
             "seed_type": crop.seed_type,
@@ -242,6 +246,7 @@ class FarmService:
 
         # 浇水
         cropped = await self.farm_repo.water_crop(plot)
+        await self.db.commit()
 
         # 计算成熟时间和阶段
         mature_at = None
@@ -287,6 +292,7 @@ class FarmService:
         new_plot = await self.farm_repo.create_plot(self.user_id, new_index)
         user.last_active_at = datetime.now(timezone.utc)
         await self._persist_user(user)
+        await self.db.commit()
 
         return {
             "plot_index": new_plot.index,
@@ -315,6 +321,7 @@ class FarmService:
 
         return {
             "user_id": self.user_id,
+            "username": user.username,
             "plots": plots,
             "stamina": user.stamina,
             "coins": user.coins,
@@ -328,7 +335,7 @@ class FarmService:
         plots_resp = [self._make_plot_response(p) for p in info["plots"]]
         user_resp = UserFarmInfo(
             id=info["user_id"],
-            username="",
+            username=info["username"],
             coins=info["coins"],
             stamina=info["stamina"],
             xp=info["xp"],

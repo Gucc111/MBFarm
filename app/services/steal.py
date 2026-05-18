@@ -108,6 +108,11 @@ class StealService:
         self.db.add(steal_log)
         await self.db.flush()
 
+        # 持久化体力消耗
+        user.updated_at = datetime.now(timezone.utc)
+        await self.db.flush()
+        await self.db.commit()
+
         return {
             "seed_type": crop.seed_type,
             "seed_name": seed_config.name,

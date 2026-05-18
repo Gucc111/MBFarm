@@ -64,7 +64,16 @@ async function loadFarm() {
 }
 
 async function loadInventory() {
-  inventoryData = await apiGetInventory();
+  const raw = await apiGetInventory();
+  // 将 { items: [{item_type, item_subtype, quantity}] } 转为 { wheat: 3, carrot: 1 }
+  inventoryData = {};
+  if (Array.isArray(raw.items)) {
+    raw.items.forEach(item => {
+      if (item.item_type === 'seed') {
+        inventoryData[item.item_subtype] = item.quantity;
+      }
+    });
+  }
 }
 
 // ── Rendering ──────────────────────────────────────────────
@@ -320,7 +329,7 @@ function renderShop() {
         <div class="shop-name">${item.name}</div>
         <div class="shop-price">¥${item.buy_price}</div>
         <div class="shop-meta">售价 ¥${item.sell_price} · 成熟 ${formatDuration(item.grow_time)}</div>
-        <div class="shop-meta">经验 +${config.xp_reward || 0}</div>
+        <div class="shop-meta">经验 +${config.xpReward || 0}</div>
         <button class="btn btn-primary btn-sm btn-full" onclick="doBuySeed('${item.seed_type}')" ${shopData.user_coins < item.buy_price ? 'disabled' : ''}>
           购买
         </button>
@@ -340,7 +349,9 @@ async function doBuySeed(seedType) {
   try {
     await apiBuySeed(seedType, 1);
     showToast(`购买 ${CROP_CONFIG[seedType].name} 种子成功！`, 'success');
-    await Promise.all([loadFarm(), loadShop(), loadInventory()]);
+    await loadFarm();
+    await loadShop();
+    await loadInventory();
     renderAll();
   } catch (e) {
     showToast(e.message, 'error');

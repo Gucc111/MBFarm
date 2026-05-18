@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import INIT_USER
+from app.core.constants import FARM, INIT_USER
 from app.core.exceptions import (
     AppValidationError,
     ConflictError,
@@ -15,6 +15,7 @@ from app.core.exceptions import (
 from app.core.security import hash_password, verify_password
 from app.models.session import Session as SessionModel
 from app.models.user import User
+from app.repositories.farm_repo import FarmRepo
 from app.repositories.user_repo import SessionRepository, UserRepository
 
 
@@ -70,6 +71,11 @@ class AuthService:
             "level": INIT_USER.level,
             "stamina": INIT_USER.stamina,
         })
+
+        # 4. 初始化初始地块
+        farm_repo = FarmRepo(self.db)
+        await farm_repo.create_initial_plots(user.id, FARM.initial_plots)
+        await self.db.commit()
 
         return user
 

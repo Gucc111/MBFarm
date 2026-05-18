@@ -3,11 +3,11 @@
  */
 
 const CROP_CONFIG = {
-  wheat:      { emoji: '🌾', name: '小麦',      growTime: 30 * 60,   unlockLevel: 1, buyPrice: 10,  sellPrice: 18  },
-  carrot:     { emoji: '🥕', name: '胡萝卜',    growTime: 2 * 3600,  unlockLevel: 2, buyPrice: 30,  sellPrice: 55  },
-  tomato:     { emoji: '🍅', name: '番茄',      growTime: 6 * 3600,  unlockLevel: 3, buyPrice: 80,  sellPrice: 150 },
-  strawberry: { emoji: '🍓', name: '草莓',      growTime: 12 * 3600, unlockLevel: 5, buyPrice: 200, sellPrice: 400 },
-  sunflower:  { emoji: '🌻', name: '向日葵',    growTime: 24 * 3600, unlockLevel: 8, buyPrice: 500, sellPrice: 1000 },
+  wheat:      { emoji: '🌾', name: '小麦',      growTime: 30 * 60,   unlockLevel: 1, buyPrice: 10,  sellPrice: 18,  xpReward: 5    },
+  carrot:     { emoji: '🥕', name: '胡萝卜',    growTime: 2 * 3600,  unlockLevel: 2, buyPrice: 30,  sellPrice: 55,  xpReward: 15   },
+  tomato:     { emoji: '🍅', name: '番茄',      growTime: 6 * 3600,  unlockLevel: 3, buyPrice: 80,  sellPrice: 150, xpReward: 40   },
+  strawberry: { emoji: '🍓', name: '草莓',      growTime: 12 * 3600, unlockLevel: 5, buyPrice: 200, sellPrice: 400, xpReward: 100  },
+  sunflower:  { emoji: '🌻', name: '向日葵',    growTime: 24 * 3600, unlockLevel: 8, buyPrice: 500, sellPrice: 1000,xpReward: 250  },
 };
 
 const SEED_TYPES = Object.keys(CROP_CONFIG);
